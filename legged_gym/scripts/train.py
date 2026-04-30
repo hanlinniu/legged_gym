@@ -30,17 +30,61 @@
 
 import numpy as np
 import os
-from datetime import datetime
 
 import isaacgym
 from legged_gym.envs import *
+from legged_gym import LEGGED_GYM_ENVS_DIR
 from legged_gym.utils import get_args, task_registry
 import torch
+
 
 def train(args):
     env, env_cfg = task_registry.make_env(name=args.task, args=args)
     ppo_runner, train_cfg = task_registry.make_alg_runner(env=env, name=args.task, args=args)
+
+    use_wandb = not args.no_wandb
+    if use_wandb:
+        try:
+            import wandb
+        except ImportError:
+            print("Warning: wandb is not installed (`pip install wandb`). Training without wandb.")
+            use_wandb = False
+
+    if use_wandb:
+        run_name = (args.wandb_name or "").strip() or (
+            os.path.basename(ppo_runner.log_dir.rstrip(os.sep)) if ppo_runner.log_dir else args.task
+        )
+        wandb_kwargs = {
+            "project": args.wandb_project,
+            "name": run_name,
+            "dir": ppo_runner.log_dir or ".",
+        }
+        ent = (args.wandb_entity or "").strip()
+        if ent:
+            wandb_kwargs["entity"] = ent
+        wandb.init(**wandb_kwargs)
+        wandb.config.update(
+            {
+                "task": args.task,
+                "experiment_name": train_cfg.runner.experiment_name,
+                "run_name": train_cfg.runner.run_name,
+            },
+            allow_val_change=True,
+        )
+        for rel in ("base/legged_robot_config.py", "base/legged_robot.py"):
+            p = os.path.join(LEGGED_GYM_ENVS_DIR, rel)
+            if os.path.isfile(p):
+                wandb.save(p, policy="now")
+
     ppo_runner.learn(num_learning_iterations=train_cfg.runner.max_iterations, init_at_random_ep_len=True)
+
+    try:
+        import wandb
+        if wandb.run is not None:
+            wandb.finish()
+    except ImportError:
+        pass
+
 
 if __name__ == '__main__':
     args = get_args()
