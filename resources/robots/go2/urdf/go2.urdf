@@ -44,24 +44,6 @@ Stephen Brawner (brawner@gmail.com)
   </link>
 
 
-  <link name="camera_box">
-    <visual>
-      <!-- <origin rpy="0 0 0" xyz="0.27 0 0.03"/> -->
-      <origin rpy="2.0944 0 1.57" xyz="0.355 0 0.225"/>  
-      <geometry>
-        <mesh
-          filename="../dae/d435.dae" />
-      </geometry>
-      <material name="red"/>
-    </visual>
-  </link>
-  <joint name="fixed_camera_box" type="fixed">
-    <origin rpy="0 0 0" xyz="0 0 0"/>
-    <parent link="base"/>
-    <child link="camera_box"/>
-  </joint>
-
-
   <link
     name="Head_upper">
     <inertial>
