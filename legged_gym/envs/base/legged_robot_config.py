@@ -240,7 +240,7 @@ class LeggedRobotCfgPPO(BaseConfig):
         policy_class_name = 'ActorCritic'
         algorithm_class_name = 'PPO'
         num_steps_per_env = 24 # per iteration
-        max_iterations = 1500 # number of policy updates
+        max_iterations = 30000 # number of policy updates
 
         # logging
         save_interval = 500 # save model every this many learning iterations
