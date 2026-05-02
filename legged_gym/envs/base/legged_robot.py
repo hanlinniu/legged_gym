@@ -157,6 +157,10 @@ class LeggedRobot(BaseTask):
         # update curriculum
         if self.cfg.terrain.curriculum:
             self._update_terrain_curriculum(env_ids)
+        if self._fault_curriculum_enabled():
+            fc_mask = self.fault_curriculum_active[env_ids]
+            if fc_mask.any():
+                self._resample_fault_gains(env_ids[fc_mask])
         # avoid updating command curriculum at each step since the maximum command is common to all envs
         if self.cfg.commands.curriculum and (self.common_step_counter % self.max_episode_length==0):
             self.update_command_curriculum(env_ids)
@@ -181,6 +185,8 @@ class LeggedRobot(BaseTask):
         # log additional curriculum info
         if self.cfg.terrain.curriculum:
             self.extras["episode"]["terrain_level"] = torch.mean(self.terrain_levels.float())
+        if self._fault_curriculum_enabled():
+            self.extras["episode"]["fault_curriculum_frac"] = self.fault_curriculum_active.float().mean()
         if self.cfg.commands.curriculum:
             self.extras["episode"]["max_command_x"] = self.command_ranges["lin_vel_x"][1]
         # send timeout info to the algorithm
@@ -364,10 +370,12 @@ class LeggedRobot(BaseTask):
         #pd controller
         actions_scaled = actions * self.cfg.control.action_scale
         control_type = self.cfg.control.control_type
+        p_eff = self.p_gains_nominal.unsqueeze(0) * self.fault_gain_scale
+        d_eff = self.d_gains_nominal.unsqueeze(0) * self.fault_gain_scale
         if control_type=="P":
-            torques = self.p_gains*(actions_scaled + self.default_dof_pos - self.dof_pos) - self.d_gains*self.dof_vel
+            torques = p_eff*(actions_scaled + self.default_dof_pos - self.dof_pos) - d_eff*self.dof_vel
         elif control_type=="V":
-            torques = self.p_gains*(actions_scaled - self.dof_vel) - self.d_gains*(self.dof_vel - self.last_dof_vel)/self.sim_params.dt
+            torques = p_eff*(actions_scaled - self.dof_vel) - d_eff*(self.dof_vel - self.last_dof_vel)/self.sim_params.dt
         elif control_type=="T":
             torques = actions_scaled
         else:
@@ -418,6 +426,31 @@ class LeggedRobot(BaseTask):
         self.root_states[:, 7:9] = torch_rand_float(-max_vel, max_vel, (self.num_envs, 2), device=self.device) # lin vel x/y
         self.gym.set_actor_root_state_tensor(self.sim, gymtorch.unwrap_tensor(self.root_states))
 
+    def _fault_curriculum_enabled(self):
+        return getattr(self.cfg, "fault_curriculum", None) is not None and self.cfg.fault_curriculum.enabled
+
+    def _resample_fault_gains(self, env_ids):
+        """Random joint fault: one joint's Kp and Kd scaled by x in scale_range; other joints unchanged."""
+        n = env_ids.shape[0]
+        if n == 0:
+            return
+        cfg = self.cfg.fault_curriculum
+        self.fault_gain_scale[env_ids] = 1.0
+        ap = getattr(cfg, "active_prob", 1.0)
+        if ap <= 0.0:
+            return
+        if ap >= 1.0:
+            apply = torch.ones(n, dtype=torch.bool, device=self.device)
+        else:
+            apply = torch.rand(n, device=self.device) < ap
+        if not torch.any(apply):
+            return
+        env_apply = env_ids[apply]
+        j = torch.randint(0, self.num_actions, (env_apply.shape[0],), device=self.device)
+        lo, hi = cfg.scale_range[0], cfg.scale_range[1]
+        x = torch_rand_float(lo, hi, (env_apply.shape[0], 1), device=self.device).squeeze(1)
+        self.fault_gain_scale[env_apply, j] = x
+
     def _update_terrain_curriculum(self, env_ids):
         """ Implements the game-inspired curriculum.
 
@@ -433,11 +466,28 @@ class LeggedRobot(BaseTask):
         move_up = distance > self.terrain.env_length / 2
         # robots that walked less than half of their required distance go to simpler terrains
         move_down = (distance < torch.norm(self.commands[env_ids, :2], dim=1)*self.max_episode_length_s*0.5) * ~move_up
+        old_levels = self.terrain_levels[env_ids].clone()
         self.terrain_levels[env_ids] += 1 * move_up - 1 * move_down
-        # Robots that solve the last level are sent to a random one
-        self.terrain_levels[env_ids] = torch.where(self.terrain_levels[env_ids]>=self.max_terrain_level,
-                                                   torch.randint_like(self.terrain_levels[env_ids], self.max_terrain_level),
-                                                   torch.clip(self.terrain_levels[env_ids], 0)) # (the minumum level is zero)
+
+        if self._fault_curriculum_enabled():
+            # Mastering the hardest terrain row (index num_rows-1) starts fault-tolerant curriculum.
+            solved_last = move_up & (old_levels == self.max_terrain_level - 1)
+            if torch.any(solved_last):
+                self.fault_curriculum_active[env_ids[solved_last]] = True
+            at_or_past = self.terrain_levels[env_ids] >= self.max_terrain_level
+            fault_on = self.fault_curriculum_active[env_ids]
+            random_level = torch.randint_like(self.terrain_levels[env_ids], high=self.max_terrain_level)
+            top_level = torch.full_like(self.terrain_levels[env_ids], self.max_terrain_level - 1)
+            self.terrain_levels[env_ids] = torch.where(
+                at_or_past,
+                torch.where(fault_on, top_level, random_level),
+                torch.clip(self.terrain_levels[env_ids], 0),
+            )
+        else:
+            # Robots that solve the last level are sent to a random one
+            self.terrain_levels[env_ids] = torch.where(self.terrain_levels[env_ids]>=self.max_terrain_level,
+                                                       torch.randint_like(self.terrain_levels[env_ids], self.max_terrain_level),
+                                                       torch.clip(self.terrain_levels[env_ids], 0)) # (the minumum level is zero)
         self.env_origins[env_ids] = self.terrain_origins[self.terrain_levels[env_ids], self.terrain_types[env_ids]]
     
     def update_command_curriculum(self, env_ids):
@@ -539,6 +589,10 @@ class LeggedRobot(BaseTask):
                 self.d_gains[i] = 0.
                 if self.cfg.control.control_type in ["P", "V"]:
                     print(f"PD gain of joint {name} were not defined, setting them to zero")
+        self.p_gains_nominal = self.p_gains.clone()
+        self.d_gains_nominal = self.d_gains.clone()
+        self.fault_gain_scale = torch.ones(self.num_envs, self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
+        self.fault_curriculum_active = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device, requires_grad=False)
         self.default_dof_pos = self.default_dof_pos.unsqueeze(0)
 
     def _prepare_reward_function(self):
