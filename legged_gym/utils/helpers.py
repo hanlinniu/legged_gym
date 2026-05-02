@@ -168,7 +168,7 @@ def get_args():
         {"name": "--no_wandb", "action": "store_true", "default": False, "help": "Disable Weights & Biases logging"},
         {"name": "--wandb_project", "type": str, "default": "legged_gym", "help": "Weights & Biases project name"},
         {"name": "--wandb_entity", "type": str, "default": "", "help": "Weights & Biases entity (optional)"},
-        {"name": "--wandb_name", "type": str, "default": "", "help": "Weights & Biases run name (default: tensorboard run folder name)"},
+        {"name": "--wandb_name", "type": str, "default": "", "help": "Weights & Biases run name; if set, also the log/checkpoint subfolder under logs/<experiment_name>/ (else timestamp_run_name)"},
     ]
     # parse arguments
     args = gymutil.parse_arguments(

@@ -110,7 +110,8 @@ class TaskRegistry():
             args (Args, optional): Isaac Gym comand line arguments. If None get_args() will be called. Defaults to None.
             train_cfg (Dict, optional): Training config file. If None 'name' will be used to get the config file. Defaults to None.
             log_root (str, optional): Logging directory for Tensorboard. Set to 'None' to avoid logging (at test time for example). 
-                                      Logs will be saved in <log_root>/<date_time>_<run_name>. Defaults to "default"=<path_to_LEGGED_GYM>/logs/<experiment_name>.
+                                      Logs will be saved in <log_root>/<run_folder>. Defaults to "default"=<path_to_LEGGED_GYM>/logs/<experiment_name>.
+                                      If args.wandb_name is set, <run_folder> equals that name (sanitized); otherwise <date_time>_<run_name>.
 
         Raises:
             ValueError: Error if neither 'name' or 'train_cfg' are provided
@@ -135,13 +136,22 @@ class TaskRegistry():
         # override cfg from args (if specified)
         _, train_cfg = update_cfg_from_args(None, train_cfg, args)
 
+        def _log_subdir_from_args():
+            wn = (getattr(args, "wandb_name", None) or "").strip()
+            if wn:
+                invalid = '\\/:*?"<>|'
+                safe = "".join(c for c in wn if c not in invalid).strip()
+                return safe if safe else "wandb_run"
+            return datetime.now().strftime('%b%d_%H-%M-%S') + '_' + train_cfg.runner.run_name
+
+        subdir = _log_subdir_from_args()
         if log_root=="default":
             log_root = os.path.join(LEGGED_GYM_ROOT_DIR, 'logs', train_cfg.runner.experiment_name)
-            log_dir = os.path.join(log_root, datetime.now().strftime('%b%d_%H-%M-%S') + '_' + train_cfg.runner.run_name)
+            log_dir = os.path.join(log_root, subdir)
         elif log_root is None:
             log_dir = None
         else:
-            log_dir = os.path.join(log_root, datetime.now().strftime('%b%d_%H-%M-%S') + '_' + train_cfg.runner.run_name)
+            log_dir = os.path.join(log_root, subdir)
         
         train_cfg_dict = class_to_dict(train_cfg)
         runner = OnPolicyRunner(env, train_cfg_dict, log_dir, device=args.rl_device)
