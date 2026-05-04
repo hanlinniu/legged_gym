@@ -169,6 +169,11 @@ def get_args():
         {"name": "--wandb_project", "type": str, "default": "legged_gym", "help": "Weights & Biases project name"},
         {"name": "--wandb_entity", "type": str, "default": "", "help": "Weights & Biases entity (optional)"},
         {"name": "--wandb_name", "type": str, "default": "", "help": "Weights & Biases run name; if set, also the log/checkpoint subfolder under logs/<experiment_name>/ (else timestamp_run_name)"},
+        {"name": "--fault_joint", "type": int, "default": -1, "help": "play_fault_tolerant: PD fault joint index [0, num_actions); -1 = random"},
+        {"name": "--fault_scale", "type": float, "default": -1.0, "help": "play_fault_tolerant: Kp/Kd multiplier x in [0,1]; negative = random Uniform(0,1)"},
+        {"name": "--healthy_seconds", "type": float, "default": 3.0, "help": "play_fault_tolerant / play_lock_fl_calf: seconds of healthy control before fault or joint lock"},
+        {"name": "--lock_joint_name", "type": str, "default": "FL_calf_joint", "help": "play_lock_fl_calf: URDF DOF name to hold at lock_angle_deg"},
+        {"name": "--lock_angle_deg", "type": float, "default": 45.0, "help": "play_lock_fl_calf: absolute joint angle in degrees after lock"},
     ]
     # parse arguments
     args = gymutil.parse_arguments(
