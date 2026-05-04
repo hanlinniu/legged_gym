@@ -488,12 +488,11 @@ class LeggedRobot(BaseTask):
             if torch.any(solved_last):
                 self.fault_curriculum_active[env_ids[solved_last]] = True
             at_or_past = self.terrain_levels[env_ids] >= self.max_terrain_level
-            fault_on = self.fault_curriculum_active[env_ids]
             random_level = torch.randint_like(self.terrain_levels[env_ids], high=self.max_terrain_level)
-            top_level = torch.full_like(self.terrain_levels[env_ids], self.max_terrain_level - 1)
+            # At/past max difficulty: random row (including when fault_curriculum_active is True).
             self.terrain_levels[env_ids] = torch.where(
                 at_or_past,
-                torch.where(fault_on, top_level, random_level),
+                random_level,
                 torch.clip(self.terrain_levels[env_ids], 0),
             )
         else:

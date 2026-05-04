@@ -174,6 +174,11 @@ def get_args():
         {"name": "--healthy_seconds", "type": float, "default": 3.0, "help": "play_fault_tolerant / play_lock_fl_calf: seconds of healthy control before fault or joint lock"},
         {"name": "--lock_joint_name", "type": str, "default": "FL_calf_joint", "help": "play_lock_fl_calf: URDF DOF name to hold at lock_angle_deg"},
         {"name": "--lock_angle_deg", "type": float, "default": 45.0, "help": "play_lock_fl_calf: absolute joint angle in degrees after lock"},
+        {"name": "--cycle_healthy_s", "type": float, "default": 3.0, "help": "play_lock_fl_calf_cycle: healthy phase length [s] in each 3s+4s-style loop"},
+        {"name": "--cycle_lock_s", "type": float, "default": 4.0, "help": "play_lock_fl_calf_cycle: locked joint phase length [s] in each loop"},
+        {"name": "--play_cmd_vx", "type": float, "default": 0.5, "help": "play_lock_fl_calf_cycle: fixed body-frame forward velocity command [m/s]"},
+        {"name": "--play_cmd_vy", "type": float, "default": 0.0, "help": "play_lock_fl_calf_cycle: fixed body-frame lateral velocity command [m/s]"},
+        {"name": "--play_cmd_yaw", "type": float, "default": 0.0, "help": "play_lock_fl_calf_cycle: fixed yaw angular velocity command [rad/s]"},
     ]
     # parse arguments
     args = gymutil.parse_arguments(
