@@ -67,12 +67,12 @@ class LeggedRobotCfg(BaseConfig):
         slope_treshold = 0.75 # slopes above this threshold will be corrected to vertical surfaces
 
     class fault_curriculum:
-        """After mastering the hardest terrain row, per-env fault curriculum: one joint's Kp/Kd scaled by x."""
+        """After mastering the hardest terrain row, per-env fault curriculum: with active_prob, one random calf joint is held at lock_angle_deg using nominal PD; other joints unchanged (healthy gains)."""
         enabled = True
-        # Each reset while in fault curriculum: probability of applying a fault (else nominal gains).
+        # Each reset while in fault curriculum: probability of locking one random *_calf_joint (else fully healthy).
         active_prob = 0.3
-        # Faulty joint: stiffness and damping multiplied by x ~ Uniform(scale_range[0], scale_range[1]).
-        scale_range = [0., 1.]
+        # Absolute calf joint angle when locked [deg] (URDF convention; Go2 calves are negative).
+        lock_angle_deg = -120.0
 
     class commands:
         curriculum = False

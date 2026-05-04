@@ -31,6 +31,7 @@
 from legged_gym import LEGGED_GYM_ROOT_DIR, envs
 from time import time
 from warnings import WarningMessage
+import math
 import numpy as np
 import os
 
@@ -380,6 +381,16 @@ class LeggedRobot(BaseTask):
             torques = actions_scaled
         else:
             raise NameError(f"Unknown controller type: {control_type}")
+        if control_type == "P" and self._fault_curriculum_enabled():
+            lock_j = self.fault_calf_lock_dof_idx
+            m = lock_j >= 0
+            if torch.any(m):
+                env_i = m.nonzero(as_tuple=False).flatten()
+                dj = lock_j[env_i]
+                p = self.p_gains_nominal[dj]
+                d = self.d_gains_nominal[dj]
+                q_t = self.fault_calf_lock_target_pos
+                torques[env_i, dj] = p * (q_t - self.dof_pos[env_i, dj]) - d * self.dof_vel[env_i, dj]
         return torch.clip(torques, -self.torque_limits, self.torque_limits)
 
     def _reset_dofs(self, env_ids):
@@ -430,12 +441,15 @@ class LeggedRobot(BaseTask):
         return getattr(self.cfg, "fault_curriculum", None) is not None and self.cfg.fault_curriculum.enabled
 
     def _resample_fault_gains(self, env_ids):
-        """Random joint fault: one joint's Kp and Kd scaled by x in scale_range; other joints unchanged."""
+        """Fault curriculum: nominal PD on every joint; with probability active_prob, one random calf joint is position-held at lock_angle_deg."""
         n = env_ids.shape[0]
         if n == 0:
             return
         cfg = self.cfg.fault_curriculum
         self.fault_gain_scale[env_ids] = 1.0
+        self.fault_calf_lock_dof_idx[env_ids] = -1
+        if self.calf_dof_indices.numel() == 0:
+            return
         ap = getattr(cfg, "active_prob", 1.0)
         if ap <= 0.0:
             return
@@ -446,10 +460,9 @@ class LeggedRobot(BaseTask):
         if not torch.any(apply):
             return
         env_apply = env_ids[apply]
-        j = torch.randint(0, self.num_actions, (env_apply.shape[0],), device=self.device)
-        lo, hi = cfg.scale_range[0], cfg.scale_range[1]
-        x = torch_rand_float(lo, hi, (env_apply.shape[0], 1), device=self.device).squeeze(1)
-        self.fault_gain_scale[env_apply, j] = x
+        nc = self.calf_dof_indices.shape[0]
+        pick = torch.randint(0, nc, (env_apply.shape[0],), device=self.device)
+        self.fault_calf_lock_dof_idx[env_apply] = self.calf_dof_indices[pick]
 
     def _update_terrain_curriculum(self, env_ids):
         """ Implements the game-inspired curriculum.
@@ -593,6 +606,16 @@ class LeggedRobot(BaseTask):
         self.d_gains_nominal = self.d_gains.clone()
         self.fault_gain_scale = torch.ones(self.num_envs, self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
         self.fault_curriculum_active = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device, requires_grad=False)
+        calf_ids = [
+            i
+            for i, name in enumerate(self.dof_names)
+            if ("calf_joint" in name) or name.endswith("_KFE")
+        ]
+        self.calf_dof_indices = torch.tensor(calf_ids, dtype=torch.long, device=self.device) if calf_ids else torch.zeros(0, dtype=torch.long, device=self.device)
+        self.fault_calf_lock_dof_idx = torch.full((self.num_envs,), -1, dtype=torch.long, device=self.device, requires_grad=False)
+        fc = getattr(self.cfg, "fault_curriculum", None)
+        lock_deg = -120.0 if fc is None else float(getattr(fc, "lock_angle_deg", -120.0))
+        self.fault_calf_lock_target_pos = math.radians(lock_deg)
         self.default_dof_pos = self.default_dof_pos.unsqueeze(0)
 
     def _prepare_reward_function(self):
