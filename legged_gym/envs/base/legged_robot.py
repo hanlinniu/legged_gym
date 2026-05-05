@@ -487,14 +487,9 @@ class LeggedRobot(BaseTask):
             solved_last = move_up & (old_levels == self.max_terrain_level - 1)
             if torch.any(solved_last):
                 self.fault_curriculum_active[env_ids[solved_last]] = True
-            at_or_past = self.terrain_levels[env_ids] >= self.max_terrain_level
-            random_level = torch.randint_like(self.terrain_levels[env_ids], high=self.max_terrain_level)
-            # At/past max difficulty: random row (including when fault_curriculum_active is True).
-            self.terrain_levels[env_ids] = torch.where(
-                at_or_past,
-                random_level,
-                torch.clip(self.terrain_levels[env_ids], 0),
-            )
+            # Keep all envs on the hardest terrain row while fault curriculum is enabled.
+            hardest = self.max_terrain_level - 1
+            self.terrain_levels[env_ids] = hardest
         else:
             # Robots that solve the last level are sent to a random one
             self.terrain_levels[env_ids] = torch.where(self.terrain_levels[env_ids]>=self.max_terrain_level,
@@ -784,9 +779,14 @@ class LeggedRobot(BaseTask):
             # put robots at the origins defined by the terrain
             max_init_level = self.cfg.terrain.max_init_terrain_level
             if not self.cfg.terrain.curriculum: max_init_level = self.cfg.terrain.num_rows - 1
-            self.terrain_levels = torch.randint(0, max_init_level+1, (self.num_envs,), device=self.device)
-            self.terrain_types = torch.div(torch.arange(self.num_envs, device=self.device), (self.num_envs/self.cfg.terrain.num_cols), rounding_mode='floor').to(torch.long)
             self.max_terrain_level = self.cfg.terrain.num_rows
+            if self._fault_curriculum_enabled():
+                self.terrain_levels = torch.full(
+                    (self.num_envs,), self.max_terrain_level - 1, dtype=torch.long, device=self.device
+                )
+            else:
+                self.terrain_levels = torch.randint(0, max_init_level + 1, (self.num_envs,), device=self.device)
+            self.terrain_types = torch.div(torch.arange(self.num_envs, device=self.device), (self.num_envs/self.cfg.terrain.num_cols), rounding_mode='floor').to(torch.long)
             self.terrain_origins = torch.from_numpy(self.terrain.env_origins).to(self.device).to(torch.float)
             self.env_origins[:] = self.terrain_origins[self.terrain_levels, self.terrain_types]
         else:
