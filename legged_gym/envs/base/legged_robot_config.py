@@ -33,7 +33,14 @@ from .base_config import BaseConfig
 class LeggedRobotCfg(BaseConfig):
     class env:
         num_envs = 4096
-        num_observations = 48 #235
+        # RMA-style stacked observations (proprio + priv + history). When False, use legacy flat proprio (+ heights) only.
+        history_encoding = True
+        n_priv_explicit = 9
+        n_priv_latent = 29
+        history_len = 10
+        n_proprio = 48
+        # Full blind-RMA vector: proprio | priv_explicit | priv_latent | flattened history
+        num_observations = n_proprio + n_priv_explicit + n_priv_latent + history_len * n_proprio
         num_privileged_obs = None # if not None a priviledge_obs_buf will be returned by step() (critic obs for assymetric training). None is returned otherwise 
         num_actions = 12
         env_spacing = 3.  # not used with heightfields/trimeshes 
@@ -129,12 +136,24 @@ class LeggedRobotCfg(BaseConfig):
 
     class domain_rand:
         randomize_friction = True
-        friction_range = [0.5, 1.25]
-        randomize_base_mass = False
-        added_mass_range = [-1., 1.]
+        friction_range = [0.6, 2.0]
+        randomize_base_mass = True
+        added_mass_range = [0.0, 3.0]
+        randomize_base_com = True
+        added_com_range = [-0.2, 0.2]
         push_robots = True
-        push_interval_s = 15
-        max_push_vel_xy = 1.
+        push_interval_s = 8
+        max_push_vel_xy = 0.5
+
+        randomize_motor = True
+        motor_strength_range = [0.8, 1.2]
+
+        delay_update_global_steps = 24 * 8000
+        action_delay = False
+        action_curr_step = [1, 1]
+        action_curr_step_scratch = [0, 1]
+        action_delay_view = 1
+        action_buf_len = 8
 
     class rewards:
         class scales:
@@ -216,11 +235,23 @@ class LeggedRobotCfgPPO(BaseConfig):
         actor_hidden_dims = [512, 256, 128]
         critic_hidden_dims = [512, 256, 128]
         activation = 'elu' # can be elu, relu, selu, crelu, lrelu, tanh, sigmoid
+        # ActorCriticRMA (default runner.policy_class_name)
+        priv_encoder_dims = [64, 20]
+        tanh_encoder_output = False
+        history_encoding = True
         # only for 'ActorCriticRecurrent':
         # rnn_type = 'lstm'
         # rnn_hidden_size = 512
         # rnn_num_layers = 1
-        
+
+    class estimator:
+        """Used when training ActorCriticRMA: MLP predicts priv_explicit (e.g. base vel) from proprio."""
+        train_with_estimated_states = True
+        learning_rate = 1.0e-4
+        hidden_dims = [128, 64]
+        priv_states_dim = 9
+        num_prop = 48
+
     class algorithm:
         # training params
         value_loss_coef = 1.0
@@ -235,9 +266,12 @@ class LeggedRobotCfgPPO(BaseConfig):
         lam = 0.95
         desired_kl = 0.01
         max_grad_norm = 1.
+        dagger_update_freq = 20
+        priv_reg_coef_schedual = [0, 0.1, 2000, 3000]
 
     class runner:
-        policy_class_name = 'ActorCritic'
+        # With class estimator below, OnPolicyRunner sets _rma_adaptation = True when this is ActorCriticRMA.
+        policy_class_name = 'ActorCriticRMA'
         algorithm_class_name = 'PPO'
         num_steps_per_env = 24 # per iteration
         max_iterations = 30000 # number of policy updates

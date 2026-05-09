@@ -31,6 +31,14 @@
 from legged_gym.envs.base.legged_robot_config import LeggedRobotCfg, LeggedRobotCfgPPO
 
 class Go2RoughCfg( LeggedRobotCfg ):
+    class env( LeggedRobotCfg.env ):
+        history_encoding = True
+        n_priv_explicit = 9
+        n_priv_latent = 29
+        history_len = 10
+        n_proprio = 48
+        num_observations = n_proprio + n_priv_explicit + n_priv_latent + history_len * n_proprio
+
     class init_state( LeggedRobotCfg.init_state ):
         pos = [0.0, 0.0, 0.35] # x,y,z [m]
         default_joint_angles = { # = target angles [rad] when action = 0.0
@@ -96,10 +104,21 @@ class Go2RoughCfg( LeggedRobotCfg ):
             # torques = -0.0002
             # dof_pos_limits = -10.0
 
+    class domain_rand( LeggedRobotCfg.domain_rand ):
+        motor_strength_range = [0.8, 1.2]
+
 class Go2RoughCfgPPO( LeggedRobotCfgPPO ):
+    class estimator( LeggedRobotCfgPPO.estimator ):
+        num_prop = 48
+        priv_states_dim = 9
     class algorithm( LeggedRobotCfgPPO.algorithm ):
         entropy_coef = 0.01
+    class policy( LeggedRobotCfgPPO.policy ):
+        priv_encoder_dims = [64, 20]
+        tanh_encoder_output = False
+        history_encoding = True
     class runner( LeggedRobotCfgPPO.runner ):
+        policy_class_name = 'ActorCriticRMA'
         run_name = ''
         experiment_name = 'rough_go2'
 
