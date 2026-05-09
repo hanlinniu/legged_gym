@@ -238,6 +238,8 @@ class LeggedRobotCfgPPO(BaseConfig):
         # ActorCriticRMA (default runner.policy_class_name)
         priv_encoder_dims = [64, 20]
         tanh_encoder_output = False
+        # If False: actor uses priv_encoder on priv_latent only (no CNN over history), no dagger, no priv_reg vs hist.
+        use_history_encoder = True
         history_encoding = True
         # only for 'ActorCriticRecurrent':
         # rnn_type = 'lstm'
@@ -245,7 +247,9 @@ class LeggedRobotCfgPPO(BaseConfig):
         # rnn_num_layers = 1
 
     class estimator:
-        """Used when training ActorCriticRMA: MLP predicts priv_explicit (e.g. base vel) from proprio."""
+        """Used when training ActorCriticRMA: optional MLP predicts priv_explicit (e.g. base vel) from proprio."""
+        # If False, train RMA (history + priv reg + dagger) with true privileged velocities from the sim in obs.
+        use_velocity_estimator = True
         train_with_estimated_states = True
         learning_rate = 1.0e-4
         hidden_dims = [128, 64]

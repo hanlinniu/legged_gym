@@ -147,6 +147,11 @@ def update_cfg_from_args(env_cfg, cfg_train, args):
             cfg_train.runner.load_run = args.load_run
         if args.checkpoint is not None:
             cfg_train.runner.checkpoint = args.checkpoint
+        if getattr(args, "no_velocity_estimator", False) and hasattr(cfg_train, "estimator"):
+            cfg_train.estimator.use_velocity_estimator = False
+        if getattr(args, "no_history_encoder", False) and hasattr(cfg_train, "policy"):
+            cfg_train.policy.use_history_encoder = False
+            cfg_train.policy.history_encoding = False
 
     return env_cfg, cfg_train
 
@@ -166,6 +171,8 @@ def get_args():
         {"name": "--seed", "type": int, "help": "Random seed. Overrides config file if provided."},
         {"name": "--max_iterations", "type": int, "help": "Maximum number of training iterations. Overrides config file if provided."},
 
+        {"name": "--no_velocity_estimator", "action": "store_true", "default": False, "help": "Train ActorCriticRMA without the velocity MLP estimator (privileged vel from sim in obs)."},
+        {"name": "--no_history_encoder", "action": "store_true", "default": False, "help": "Train ActorCriticRMA without history CNN / dagger (priv_encoder on priv_latent only)."},
         {"name": "--no_wandb", "action": "store_true", "default": False, "help": "Disable Weights & Biases logging"},
         {"name": "--wandb_project", "type": str, "default": "legged_gym", "help": "Weights & Biases project name"},
         {"name": "--wandb_entity", "type": str, "default": "", "help": "Weights & Biases entity (optional)"},
@@ -205,7 +212,9 @@ def configure_play_rma_deploy(train_cfg):
     if runner is None or getattr(runner, "policy_class_name", None) != "ActorCriticRMA":
         return
     if hasattr(train_cfg, "estimator"):
-        train_cfg.estimator.train_with_estimated_states = True
+        est = train_cfg.estimator
+        if getattr(est, "use_velocity_estimator", True):
+            est.train_with_estimated_states = True
 
 
 class _RMAActorJitWrapper(nn.Module):

@@ -67,7 +67,12 @@ class OnPolicyRunner:
             num_critic_obs = self.env.num_obs
         actor_critic_class = eval(self.cfg["policy_class_name"])
         policy_name = self.cfg["policy_class_name"]
+        self._use_history_encoder = True
         if policy_name == "ActorCriticRMA":
+            pc = dict(self.policy_cfg)
+            self._use_history_encoder = bool(pc.pop("use_history_encoder", True))
+            if not self._use_history_encoder:
+                pc["history_encoding"] = False
             actor_critic = actor_critic_class(
                 self.env.num_prop,
                 num_critic_obs,
@@ -75,7 +80,7 @@ class OnPolicyRunner:
                 self.env.num_priv_explicit,
                 self.env.num_hist,
                 self.env.num_actions,
-                **self.policy_cfg,
+                **pc,
             ).to(self.device)
         else:
             actor_critic = actor_critic_class(
@@ -89,18 +94,28 @@ class OnPolicyRunner:
         self.dagger_update_freq = 0
         if policy_name == "ActorCriticRMA" and self.estimator_cfg is not None:
             ec = self.estimator_cfg
-            estimator = Estimator(
-                input_dim=int(ec["num_prop"]),
-                output_dim=int(ec["priv_states_dim"]),
-                hidden_dims=ec["hidden_dims"],
-            ).to(self.device)
-            self.alg: PPO = alg_class(
-                actor_critic,
-                device=self.device,
-                estimator=estimator,
-                estimator_cfg=ec,
-                **self.alg_cfg,
-            )
+            use_vel_est = bool(ec.get("use_velocity_estimator", True))
+            if use_vel_est:
+                estimator = Estimator(
+                    input_dim=int(ec["num_prop"]),
+                    output_dim=int(ec["priv_states_dim"]),
+                    hidden_dims=ec["hidden_dims"],
+                ).to(self.device)
+                self.alg: PPO = alg_class(
+                    actor_critic,
+                    device=self.device,
+                    estimator=estimator,
+                    estimator_cfg=ec,
+                    **self.alg_cfg,
+                )
+            else:
+                self.alg = alg_class(
+                    actor_critic,
+                    device=self.device,
+                    estimator=None,
+                    estimator_cfg=ec,
+                    **self.alg_cfg,
+                )
             self._rma_adaptation = True
             self.dagger_update_freq = int(self.alg_cfg.get("dagger_update_freq", 20))
         else:
@@ -146,7 +161,7 @@ class OnPolicyRunner:
         self.start_learning_iteration = copy(self.current_learning_iteration)
         for it in range(self.current_learning_iteration, tot_iter):
             start = time.time()
-            if self._rma_adaptation:
+            if self._rma_adaptation and self._use_history_encoder:
                 hist_encoding = it % self.dagger_update_freq == 0
             else:
                 hist_encoding = False

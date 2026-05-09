@@ -39,20 +39,29 @@ class PPO:
 
         self.estimator = estimator
         self.estimator_cfg = estimator_cfg or {}
-        self._rma_adaptation = estimator is not None and isinstance(self.actor_critic, ActorCriticRMA)
+        self._has_estimator = estimator is not None
+        self._rma_adaptation = isinstance(self.actor_critic, ActorCriticRMA)
 
         priv_reg_coef_schedual = kwargs.pop("priv_reg_coef_schedual", None)
         if self._rma_adaptation:
+            ec = self.estimator_cfg
             self.priv_reg_coef_schedual = priv_reg_coef_schedual or [0, 0.0, 0, 1]
-            self.priv_states_dim = int(self.estimator_cfg["priv_states_dim"])
-            self.num_prop = int(self.estimator_cfg["num_prop"])
-            self.train_with_estimated_states = bool(self.estimator_cfg.get("train_with_estimated_states", True))
-            est_lr = float(self.estimator_cfg.get("learning_rate", self.learning_rate))
-            self.estimator_optimizer = optim.Adam(self.estimator.parameters(), lr=est_lr)
-            self.hist_encoder_optimizer = optim.Adam(
-                self.actor_critic.actor.history_encoder.parameters(), lr=self.learning_rate
-            )
+            self.priv_states_dim = int(ec.get("priv_states_dim", 9))
+            self.num_prop = int(ec.get("num_prop", 48))
+            if getattr(self.actor_critic, "history_encoding", True):
+                self.hist_encoder_optimizer = optim.Adam(
+                    self.actor_critic.actor.history_encoder.parameters(), lr=self.learning_rate
+                )
+            else:
+                self.hist_encoder_optimizer = None
             self.counter = 0
+            if self._has_estimator:
+                self.train_with_estimated_states = bool(ec.get("train_with_estimated_states", True))
+                est_lr = float(ec.get("learning_rate", self.learning_rate))
+                self.estimator_optimizer = optim.Adam(self.estimator.parameters(), lr=est_lr)
+            else:
+                self.train_with_estimated_states = False
+                self.estimator_optimizer = None
         else:
             self.priv_reg_coef_schedual = priv_reg_coef_schedual
             self.priv_states_dim = None
@@ -208,32 +217,36 @@ class PPO:
                 continue
 
             if self._rma_adaptation:
-                self.actor_critic.update_distribution(
-                    obs_batch, hist_encoding=self.actor_critic.history_encoding
-                )
+                he = self.actor_critic.history_encoding
+                self.actor_critic.update_distribution(obs_batch, hist_encoding=he)
                 actions_log_prob_batch = self.actor_critic.get_actions_log_prob(actions_batch)
                 value_batch = self.actor_critic.evaluate(critic_obs_batch)
                 mu_batch = self.actor_critic.action_mean
                 sigma_batch = self.actor_critic.action_std
                 entropy_batch = self.actor_critic.entropy
 
-                priv_latent_batch = self.actor_critic.actor.infer_priv_latent(obs_batch)
-                with torch.inference_mode():
-                    hist_latent_batch = self.actor_critic.actor.infer_hist_latent(obs_batch)
-                priv_reg_loss = (priv_latent_batch - hist_latent_batch.detach()).norm(p=2, dim=1).mean()
+                if he:
+                    priv_latent_batch = self.actor_critic.actor.infer_priv_latent(obs_batch)
+                    with torch.inference_mode():
+                        hist_latent_batch = self.actor_critic.actor.infer_hist_latent(obs_batch)
+                    priv_reg_loss = (priv_latent_batch - hist_latent_batch.detach()).norm(p=2, dim=1).mean()
+                else:
+                    priv_reg_loss = torch.zeros((), device=self.device, dtype=torch.float32)
                 sched = self.priv_reg_coef_schedual
                 priv_reg_stage = min(max((self.counter - sched[2]), 0) / max(sched[3], 1e-8), 1.0)
                 priv_reg_coef = priv_reg_stage * (sched[1] - sched[0]) + sched[0]
 
-                priv_states_predicted = self.estimator(obs_batch[:, : self.num_prop])
-                estimator_loss = (
-                    priv_states_predicted
-                    - obs_batch[:, self.num_prop : self.num_prop + self.priv_states_dim]
-                ).pow(2).mean()
-                self.estimator_optimizer.zero_grad()
-                estimator_loss.backward()
-                nn.utils.clip_grad_norm_(self.estimator.parameters(), self.max_grad_norm)
-                self.estimator_optimizer.step()
+                if self._has_estimator:
+                    priv_states_predicted = self.estimator(obs_batch[:, : self.num_prop])
+                    estimator_loss = (
+                        priv_states_predicted
+                        - obs_batch[:, self.num_prop : self.num_prop + self.priv_states_dim]
+                    ).pow(2).mean()
+                    self.estimator_optimizer.zero_grad()
+                    estimator_loss.backward()
+                    nn.utils.clip_grad_norm_(self.estimator.parameters(), self.max_grad_norm)
+                    self.estimator_optimizer.step()
+                    mean_estimator_loss += estimator_loss.item()
 
                 if self.desired_kl is not None and self.schedule == "adaptive":
                     with torch.inference_mode():
@@ -272,11 +285,12 @@ class PPO:
                 else:
                     value_loss = (returns_batch - value_batch).pow(2).mean()
 
+                reg = priv_reg_coef * priv_reg_loss if he else torch.zeros((), device=self.device)
                 loss = (
                     surrogate_loss
                     + self.value_loss_coef * value_loss
                     - self.entropy_coef * entropy_batch.mean()
-                    + priv_reg_coef * priv_reg_loss
+                    + reg
                 )
 
                 self.optimizer.zero_grad()
@@ -286,7 +300,6 @@ class PPO:
 
                 mean_value_loss += value_loss.item()
                 mean_surrogate_loss += surrogate_loss.item()
-                mean_estimator_loss += estimator_loss.item()
                 mean_priv_reg_loss += priv_reg_loss.item()
                 continue
 
@@ -355,15 +368,18 @@ class PPO:
         self.update_counter()
 
         if self._rma_adaptation:
-            mean_estimator_loss /= num_updates
             mean_priv_reg_loss /= num_updates
+            if self._has_estimator:
+                mean_estimator_loss /= num_updates
+            else:
+                mean_estimator_loss = 0.0
             return mean_value_loss, mean_surrogate_loss, mean_estimator_loss, mean_priv_reg_loss, priv_reg_coef
 
         return mean_value_loss, mean_surrogate_loss
 
     def update_dagger(self):
         mean_hist_latent_loss = 0.0
-        if not self._rma_adaptation:
+        if not self._rma_adaptation or self.hist_encoder_optimizer is None:
             return mean_hist_latent_loss
 
         if self.actor_critic.is_recurrent:

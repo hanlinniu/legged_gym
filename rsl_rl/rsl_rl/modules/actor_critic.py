@@ -261,7 +261,7 @@ class ActorCriticRMA(nn.Module):
         init_noise_std=1.0,
         **kwargs,
     ):
-        _rma_kw = ("priv_encoder_dims", "tanh_encoder_output", "history_encoding", "scan_encoder_dims")
+        _rma_kw = ("priv_encoder_dims", "tanh_encoder_output", "history_encoding", "scan_encoder_dims", "use_history_encoder")
         extra = [k for k in kwargs.keys() if k not in _rma_kw]
         if extra:
             print(
