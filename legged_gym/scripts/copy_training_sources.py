@@ -13,8 +13,11 @@ until `legged_gym/envs/base/legged_robot_config.py` exists. Override with env
 Files are always written to the process cwd (where you run the command).
 
 Also writes ``changed_files_vs_github.txt``: repo-relative paths that differ from
-the default remote branch (``git diff origin/HEAD`` plus untracked tracked by
-``git ls-files --others``). If no remote ref exists, falls back to ``git diff HEAD``.
+the **current branch's upstream** (``git diff @{upstream}``), i.e. the remote
+tracking branch for the branch checked out in the repo. Untracked-only files are
+not listed. If no upstream exists, tries ``origin/<same-branch-name>``, then
+``origin/HEAD`` / ``origin/main`` / ``origin/master``; if none apply, falls back to
+``git diff HEAD`` (local commits + working tree vs last commit).
 """
 from __future__ import annotations
 
@@ -44,21 +47,53 @@ def find_repo_root() -> Optional[Path]:
     return None
 
 
-def _resolve_origin_ref(repo_root: Path) -> Optional[str]:
-    """Return first usable remote ref (origin/HEAD, origin/main, origin/master)."""
+def _git_verify_ref(repo_root: Path, ref: str) -> bool:
+    r = subprocess.run(
+        ["git", "-C", str(repo_root), "rev-parse", "--verify", f"{ref}^{{commit}}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return r.returncode == 0
+
+
+def _resolve_remote_comparison_ref(repo_root: Path) -> tuple[Optional[str], str]:
+    """Ref to diff working tree + index against: prefer current branch's upstream."""
+    up = subprocess.run(
+        ["git", "-C", str(repo_root), "rev-parse", "--abbrev-ref", "@{u}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if up.returncode == 0:
+        ref = up.stdout.strip()
+        if ref:
+            return ref, f"upstream of current branch ({ref})"
+
+    br = subprocess.run(
+        ["git", "-C", str(repo_root), "rev-parse", "--abbrev-ref", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if br.returncode == 0:
+        head_name = br.stdout.strip()
+        if head_name and head_name != "HEAD":
+            origin_same = f"origin/{head_name}"
+            if _git_verify_ref(repo_root, origin_same):
+                return origin_same, f"no configured @{{u}}; using {origin_same}"
+
     for ref in ("origin/HEAD", "origin/main", "origin/master"):
-        r = subprocess.run(
-            ["git", "-C", str(repo_root), "rev-parse", "--verify", f"{ref}^{{commit}}"],
-            capture_output=True,
-            text=True,
-        )
-        if r.returncode == 0:
-            return ref
-    return None
+        if _git_verify_ref(repo_root, ref):
+            return ref, f"no upstream; using default remote ref ({ref})"
+    return None, "no usable remote ref"
 
 
 def git_paths_differing_from_remote(repo_root: Path) -> tuple[list[str], str]:
-    """Paths under repo_root that differ from the default remote branch (working tree + index).
+    """Paths under repo_root that differ from the remote tracking branch (git diff only).
+
+    Uses ``@{upstream}`` when set; see ``_resolve_remote_comparison_ref``. Does not
+    list untracked-only paths.
 
     Returns (sorted_unique_relative_paths, note) where note describes the comparison or an error.
     """
@@ -74,43 +109,23 @@ def git_paths_differing_from_remote(repo_root: Path) -> tuple[list[str], str]:
     except FileNotFoundError:
         return [], "git executable not found (skipped)"
 
-    origin_ref = _resolve_origin_ref(repo_root)
+    compare_ref, resolve_note = _resolve_remote_comparison_ref(repo_root)
     paths: set[str] = set()
 
-    if origin_ref:
+    if compare_ref:
         diff = subprocess.run(
-            ["git", "-C", str(repo_root), "diff", "--name-only", origin_ref],
+            ["git", "-C", str(repo_root), "diff", "--name-only", compare_ref],
             capture_output=True,
             text=True,
             check=False,
         )
-        if diff.returncode == 0:
-            for line in diff.stdout.splitlines():
-                line = line.strip()
-                if line:
-                    paths.add(line.replace("\\", "/"))
-        else:
-            return [], f"git diff failed vs {origin_ref}: {diff.stderr.strip() or diff.stdout.strip()}"
-
-        untracked = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(repo_root),
-                "ls-files",
-                "--others",
-                "--exclude-standard",
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if untracked.returncode == 0:
-            for line in untracked.stdout.splitlines():
-                line = line.strip()
-                if line:
-                    paths.add(line.replace("\\", "/"))
-        note = f"compared working tree + index to {origin_ref}"
+        if diff.returncode != 0:
+            return [], f"git diff failed vs {compare_ref}: {diff.stderr.strip() or diff.stdout.strip()}"
+        for line in diff.stdout.splitlines():
+            line = line.strip()
+            if line:
+                paths.add(line.replace("\\", "/"))
+        note = f"compared working tree + index to remote: {resolve_note}"
     else:
         head_diff = subprocess.run(
             ["git", "-C", str(repo_root), "diff", "--name-only", "HEAD"],
@@ -124,7 +139,7 @@ def git_paths_differing_from_remote(repo_root: Path) -> tuple[list[str], str]:
             line = line.strip()
             if line:
                 paths.add(line.replace("\\", "/"))
-        note = "no origin/main or origin/master or origin/HEAD; compared to local HEAD only"
+        note = f"{resolve_note}; compared to local HEAD only"
 
     return sorted(paths), note
 
@@ -162,6 +177,7 @@ def main() -> int:
         lg / "utils" / "helpers.py",
         lg / "envs" / "go2" / "go2_config.py",
         repo_root / "rsl_rl" / "rsl_rl" / "runners" / "on_policy_runner.py",
+        repo_root / "rsl_rl" / "rsl_rl" / "algorithms" / "ppo.py",
     ]
 
     dest_dir = Path.cwd()

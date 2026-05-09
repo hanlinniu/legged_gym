@@ -31,6 +31,7 @@
 import os
 import copy
 import torch
+import torch.nn as nn
 import numpy as np
 import random
 from isaacgym import gymapi
@@ -192,6 +193,33 @@ def get_args():
         args.sim_device += f":{args.sim_device_id}"
     return args
 
+
+def configure_play_rma_deploy(train_cfg):
+    """Use before ``make_alg_runner`` when playing with ActorCriticRMA + Estimator checkpoints.
+
+    Sets ``train_with_estimated_states`` so ``OnPolicyRunner.get_inference_policy`` fills the
+    privileged-velocity block from the estimator (deployment-style), matching blind RMA training.
+    No-op for non-RMA tasks.
+    """
+    runner = getattr(train_cfg, "runner", None)
+    if runner is None or getattr(runner, "policy_class_name", None) != "ActorCriticRMA":
+        return
+    if hasattr(train_cfg, "estimator"):
+        train_cfg.estimator.train_with_estimated_states = True
+
+
+class _RMAActorJitWrapper(nn.Module):
+    """Single-argument actor for TorchScript export (fixed history-encoding path)."""
+
+    def __init__(self, rma_actor: nn.Module, hist_encoding: bool = True):
+        super().__init__()
+        self.rma_actor = rma_actor
+        self._hist_encoding = bool(hist_encoding)
+
+    def forward(self, obs: torch.Tensor) -> torch.Tensor:
+        return self.rma_actor(obs, self._hist_encoding)
+
+
 def export_policy_as_jit(actor_critic, path):
     if hasattr(actor_critic, 'memory_a'):
         # assumes LSTM: TODO add GRU
@@ -201,7 +229,22 @@ def export_policy_as_jit(actor_critic, path):
         os.makedirs(path, exist_ok=True)
         path = os.path.join(path, 'policy_1.pt')
         model = copy.deepcopy(actor_critic.actor).to('cpu')
-        traced_script_module = torch.jit.script(model)
+        # RMAActor.forward(obs, hist_encoding bool) cannot be torch.jit.script'd through a wrapper
+        # (TorchScript infers the wrong type for hist_encoding). Use trace with a dummy obs instead.
+        if hasattr(model, "infer_hist_latent") and hasattr(model, "infer_priv_latent"):
+            he = getattr(actor_critic, "history_encoding", True)
+            wrapped = _RMAActorJitWrapper(model, hist_encoding=bool(he))
+            wrapped.eval()
+            obs_dim = (
+                model.num_prop
+                + model.num_priv_explicit
+                + model.num_priv_latent
+                + model.num_hist * model.num_prop
+            )
+            example = torch.zeros(1, obs_dim, dtype=torch.float32)
+            traced_script_module = torch.jit.trace(wrapped, example, strict=False)
+        else:
+            traced_script_module = torch.jit.script(model)
         traced_script_module.save(path)
 
 

@@ -14,7 +14,7 @@ import os
 
 import isaacgym
 from legged_gym.envs import *
-from legged_gym.utils import get_args, export_policy_as_jit, task_registry, Logger
+from legged_gym.utils import get_args, export_policy_as_jit, task_registry, Logger, configure_play_rma_deploy
 
 import numpy as np
 import torch
@@ -64,6 +64,7 @@ def _refresh_obs_after_command_override(env):
 
 def play_lock_fl_calf_cycle(args):
     env_cfg, train_cfg = task_registry.get_cfgs(name=args.task)
+    configure_play_rma_deploy(train_cfg)
     env_cfg.env.num_envs = min(env_cfg.env.num_envs, 50)
     env_cfg.terrain.num_rows = 5
     env_cfg.terrain.num_cols = 5
@@ -217,7 +218,8 @@ def play_lock_fl_calf_cycle(args):
 
 
 if __name__ == "__main__":
-    EXPORT_POLICY = True
+    # .pt checkpoint is loaded by runner; set True only to export TorchScript.
+    EXPORT_POLICY = False
     RECORD_FRAMES = False
     MOVE_CAMERA = False
     args = get_args()

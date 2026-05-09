@@ -33,7 +33,7 @@ import os
 
 import isaacgym
 from legged_gym.envs import *
-from legged_gym.utils import  get_args, export_policy_as_jit, task_registry, Logger
+from legged_gym.utils import get_args, export_policy_as_jit, task_registry, Logger, configure_play_rma_deploy
 
 import numpy as np
 import torch
@@ -41,6 +41,7 @@ import torch
 
 def play(args):
     env_cfg, train_cfg = task_registry.get_cfgs(name=args.task)
+    configure_play_rma_deploy(train_cfg)
     # override some parameters for testing
     env_cfg.env.num_envs = min(env_cfg.env.num_envs, 50)
     env_cfg.terrain.num_rows = 5
@@ -114,7 +115,8 @@ def play(args):
             logger.print_rewards()
 
 if __name__ == '__main__':
-    EXPORT_POLICY = True
+    # Checkpoints are .pt via runner.load; set True only if you need TorchScript export.
+    EXPORT_POLICY = False
     RECORD_FRAMES = False
     MOVE_CAMERA = False
     args = get_args()
