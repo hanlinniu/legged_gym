@@ -178,6 +178,7 @@ def main() -> int:
         lg / "envs" / "go2" / "go2_config.py",
         repo_root / "rsl_rl" / "rsl_rl" / "runners" / "on_policy_runner.py",
         repo_root / "rsl_rl" / "rsl_rl" / "algorithms" / "ppo.py",
+        repo_root / "rsl_rl" / "rsl_rl" / "modules" / "actor_critic.py",
     ]
 
     dest_dir = Path.cwd()
