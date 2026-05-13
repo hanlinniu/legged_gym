@@ -156,15 +156,15 @@ class LeggedRobot(BaseTask):
         if len(env_ids) == 0:
             return
         # update curriculum
-        if self.cfg.terrain.curriculum:
-            self._update_terrain_curriculum(env_ids)
-        if self._fault_curriculum_enabled():
-            fc_mask = self.fault_curriculum_active[env_ids]
-            if fc_mask.any():
-                self._resample_fault_gains(env_ids[fc_mask])
+        # if self.cfg.terrain.curriculum:
+        #     self._update_terrain_curriculum(env_ids)
+        # if self._fault_curriculum_enabled():
+        #     fc_mask = self.fault_curriculum_active[env_ids]
+        #     if fc_mask.any():
+        #         self._resample_fault_gains(env_ids[fc_mask])
         # avoid updating command curriculum at each step since the maximum command is common to all envs
-        if self.cfg.commands.curriculum and (self.common_step_counter % self.max_episode_length==0):
-            self.update_command_curriculum(env_ids)
+        # if self.cfg.commands.curriculum and (self.common_step_counter % self.max_episode_length==0):
+        #     self.update_command_curriculum(env_ids)
         
         # reset robot states
         self._reset_dofs(env_ids)
