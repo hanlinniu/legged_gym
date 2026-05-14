@@ -88,6 +88,12 @@ class BaseTask():
         self.enable_viewer_sync = True
         self.viewer = None
 
+        self.free_cam = False
+        self.lookat_id = 0
+        self.lookat_vec = torch.tensor([-0.0, 2.0, 1.0], device=self.device, requires_grad=False)
+        # When True, each render tracks root_states[lookat_id]; [ / ] cycle env index (e.g. play_fault_health_cycle).
+        self.viewer_follow_robot = False
+
         # if running with a viewer, set up keyboard shortcuts and camera
         if self.headless == False:
             # subscribe to keyboard shortcuts
@@ -97,6 +103,10 @@ class BaseTask():
                 self.viewer, gymapi.KEY_ESCAPE, "QUIT")
             self.gym.subscribe_viewer_keyboard_event(
                 self.viewer, gymapi.KEY_V, "toggle_viewer_sync")
+            self.gym.subscribe_viewer_keyboard_event(
+                self.viewer, gymapi.KEY_LEFT_BRACKET, "prev_id")
+            self.gym.subscribe_viewer_keyboard_event(
+                self.viewer, gymapi.KEY_RIGHT_BRACKET, "next_id")
 
     def get_observations(self):
         return self.obs_buf
@@ -117,11 +127,27 @@ class BaseTask():
     def step(self, actions):
         raise NotImplementedError
 
+    def lookat(self, i):
+        """Point viewer camera at env index i (requires root_states; uses set_camera if defined)."""
+        if self.viewer is None or not hasattr(self, "root_states"):
+            return
+        look_at_pos = self.root_states[i, :3].clone()
+        cam_pos = look_at_pos + self.lookat_vec
+        if hasattr(self, "set_camera"):
+            self.set_camera(cam_pos, look_at_pos)
+        else:
+            cam = gymapi.Vec3(float(cam_pos[0]), float(cam_pos[1]), float(cam_pos[2]))
+            tgt = gymapi.Vec3(float(look_at_pos[0]), float(look_at_pos[1]), float(look_at_pos[2]))
+            self.gym.viewer_camera_look_at(self.viewer, None, cam, tgt)
+
     def render(self, sync_frame_time=True):
         if self.viewer:
             # check for window closed
             if self.gym.query_viewer_has_closed(self.viewer):
                 sys.exit()
+
+            if not self.free_cam and getattr(self, "viewer_follow_robot", False):
+                self.lookat(self.lookat_id)
 
             # check for keyboard events
             for evt in self.gym.query_viewer_action_events(self.viewer):
@@ -129,11 +155,19 @@ class BaseTask():
                     sys.exit()
                 elif evt.action == "toggle_viewer_sync" and evt.value > 0:
                     self.enable_viewer_sync = not self.enable_viewer_sync
+                elif not self.free_cam and getattr(self, "viewer_follow_robot", False):
+                    if evt.action == "prev_id" and evt.value > 0:
+                        self.lookat_id = (self.lookat_id - 1) % self.num_envs
+                        self.lookat(self.lookat_id)
+                    elif evt.action == "next_id" and evt.value > 0:
+                        self.lookat_id = (self.lookat_id + 1) % self.num_envs
+                        self.lookat(self.lookat_id)
 
             # fetch results
             if self.device != 'cpu':
                 self.gym.fetch_results(self.sim, True)
 
+            self.gym.poll_viewer_events(self.viewer)
             # step graphics
             if self.enable_viewer_sync:
                 self.gym.step_graphics(self.sim)
@@ -142,3 +176,13 @@ class BaseTask():
                     self.gym.sync_frame_time(self.sim)
             else:
                 self.gym.poll_viewer_events(self.viewer)
+
+            if (
+                not self.free_cam
+                and getattr(self, "viewer_follow_robot", False)
+                and hasattr(self, "root_states")
+            ):
+                p = self.gym.get_viewer_camera_transform(self.viewer, None).p
+                cam_trans = torch.tensor([p.x, p.y, p.z], device=self.device, requires_grad=False)
+                look_at_pos = self.root_states[self.lookat_id, :3].clone()
+                self.lookat_vec = cam_trans - look_at_pos

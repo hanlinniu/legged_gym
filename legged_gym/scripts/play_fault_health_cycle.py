@@ -5,6 +5,7 @@
 # (same mechanism as LeggedRobot distance-timed fault curriculum: one calf held at
 # lock_angle_deg via PD, then unlocked). All envs are forced into this mode for testing.
 # With a viewer: camera follows env --lookat_id (default 1); [ and ] switch to previous / next env.
+# Optional: --fixed_cmd [--cmd_lin_vel_x 0.6] [--cmd_lin_vel_y 0] [--cmd_ang_vel_yaw 0] for constant body-frame commands.
 
 from legged_gym import LEGGED_GYM_ROOT_DIR
 import os
@@ -26,6 +27,19 @@ def play_fault_health_cycle(args):
     env_cfg.noise.add_noise = False
     env_cfg.domain_rand.randomize_friction = False
     env_cfg.domain_rand.push_robots = False
+
+    if args.fixed_cmd:
+        x = float(args.cmd_lin_vel_x)
+        y = float(args.cmd_lin_vel_y)
+        w = float(args.cmd_ang_vel_yaw)
+        env_cfg.commands.heading_command = False
+        env_cfg.commands.ranges.lin_vel_x = [x, x]
+        env_cfg.commands.ranges.lin_vel_y = [y, y]
+        env_cfg.commands.ranges.ang_vel_yaw = [w, w]
+        print(
+            f"[play_fault_health_cycle] Fixed velocity commands (body frame): "
+            f"lin_vel_x={x} m/s, lin_vel_y={y} m/s, ang_vel_yaw={w} rad/s (heading_command off)."
+        )
 
     if not hasattr(env_cfg, "fault_curriculum"):
         raise RuntimeError(

@@ -174,6 +174,12 @@ def get_args():
         {"name": "--healthy_seconds", "type": float, "default": 3.0, "help": "play_fault_tolerant / play_lock_fl_calf: seconds of healthy control before fault or joint lock"},
         {"name": "--lock_joint_name", "type": str, "default": "FL_calf_joint", "help": "play_lock_fl_calf: URDF DOF name to hold at lock_angle_deg"},
         {"name": "--lock_angle_deg", "type": float, "default": 45.0, "help": "play_lock_fl_calf: absolute joint angle in degrees after lock"},
+        {"name": "--fault_segment_s", "type": float, "default": 3.0, "help": "play_fault_health_cycle: seconds per fault phase and per healthy phase (matches training timed fault)"},
+        {"name": "--lookat_id", "type": int, "default": 1, "help": "play_fault_health_cycle: env index to follow at start; [ / ] cycle prev/next"},
+        {"name": "--fixed_cmd", "action": "store_true", "default": False, "help": "play_fault_health_cycle: constant body-frame velocity commands (disables heading_command; sets command ranges to min=max)"},
+        {"name": "--cmd_lin_vel_x", "type": float, "default": 0.6, "help": "With --fixed_cmd: forward linear velocity command [m/s]"},
+        {"name": "--cmd_lin_vel_y", "type": float, "default": 0.0, "help": "With --fixed_cmd: lateral linear velocity command [m/s]"},
+        {"name": "--cmd_ang_vel_yaw", "type": float, "default": 0.0, "help": "With --fixed_cmd: yaw angular velocity command [rad/s]"},
     ]
     # parse arguments
     args = gymutil.parse_arguments(
