@@ -51,6 +51,7 @@ def main() -> int:
     lg = repo_root / "legged_gym"
     sources = [
         lg / "envs" / "base" / "legged_robot_config.py",
+        lg / "envs" / "base" / "base_task.py",
         lg / "envs" / "base" / "legged_robot.py",
         lg / "utils" / "terrain.py",
         lg / "utils" / "helpers.py",
